@@ -9,8 +9,15 @@ app.use(cors());
 app.use(express.json());
 
 // Database connection
-const sequelize = new Sequelize('postgres://user:password@localhost:5432/messaging_platform', {
+const sequelize = new Sequelize(process.env.DATABASE_URL, {
+  dialect: 'postgres',
   logging: false,
+  dialectOptions: {
+    ssl: {
+      require: true, // Enable SSL for secure connections
+      rejectUnauthorized: false, // Bypass SSL certificate validation (for testing only)
+    },
+  },
 });
 
 // Define Question model
