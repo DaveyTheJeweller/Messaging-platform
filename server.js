@@ -8,74 +8,73 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Database connection
+// Database connection with SSL enforcement
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: 'postgres',
-  logging: false, // Disable logging for cleaner output
+  logging: false,
   dialectOptions: {
-    ssl: {
-      require: true, // Enable SSL for secure connections
-      rejectUnauthorized: false, // Bypass SSL certificate validation (for testing only)
-    },
+    ssl: { // Critical for Supabase
+      require: true,
+      rejectUnauthorized: false // Required for self-signed certificates
+    }
   },
 });
 
-// Define Question model
+// Question model
 const Question = sequelize.define('Question', {
-  text: DataTypes.STRING,
+  text: { type: DataTypes.STRING, allowNull: false },
   answer: DataTypes.STRING,
-  department: DataTypes.STRING,
-  count: { type: DataTypes.INTEGER, defaultValue: 0 },
+  department: { type: DataTypes.STRING, allowNull: false },
+  count: { type: DataTypes.INTEGER, defaultValue: 0 }
 });
 
-// Sync database
+// Database sync with error handling
 sequelize.sync()
-  .then(() => console.log('Database synced'))
-  .catch((err) => console.error('Database sync error:', err));
+  .then(() => console.log('✅ Database connected'))
+  .catch(err => console.error('❌ Database connection failed:', err));
 
-// Socket.IO setup
+// Socket.IO setup with CORS restrictions
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*' }, // Allow all origins for now
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000', // Your Replit/Vercel URL
+    methods: ['GET', 'POST']
+  }
 });
 
+// Real-time communication handler
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+  console.log('🔌 User connected:', socket.id);
 
-  // Listen for new messages
   socket.on('send_message', async (data) => {
-    const { text, department } = data;
-
     try {
-      // Check if the question already exists
-      const question = await Question.findOne({ where: { text, department } });
+      const { text, department } = data;
+      const [question] = await Question.findOrCreate({
+        where: { text, department },
+        defaults: { count: 1 }
+      });
 
-      if (question) {
-        // If the question exists, increment the count
-        question.count += 1;
-        await question.save();
-
-        // If the question has been asked twice, send the automated response
-        if (question.count >= 2) {
-          io.emit('receive_message', { text, answer: question.answer });
-        }
+      if (question.count >= 2) {
+        io.emit('receive_message', { 
+          text, 
+          answer: question.answer || "Our team will respond shortly" 
+        });
       } else {
-        // If the question doesn't exist, create a new record
-        await Question.create({ text, department });
+        await question.increment('count');
       }
     } catch (err) {
-      console.error('Error handling message:', err);
+      console.error('⚠️ Message handling error:', err);
+      socket.emit('error', 'Failed to process message');
     }
   });
 
-  // Handle user disconnect
   socket.on('disconnect', () => {
-    console.log('A user disconnected:', socket.id);
+    console.log('🔴 User disconnected:', socket.id);
   });
 });
 
-// Start server
+// Server start
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
